@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { GoogleLogin, useGoogleLogin } from "@react-oauth/google";
+import { AxiosError } from "axios";
 import {
   Camera,
   CloudSun,
@@ -112,6 +113,7 @@ function parseDurationToMs(value?: string) {
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [photos, setPhotos] = useState<PhotoRecord[]>([]);
   const [selectedSpecies, setSelectedSpecies] = useState<SpeciesName>(defaultSpecies);
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
@@ -149,8 +151,12 @@ export default function App() {
           setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
         } else if (error instanceof Error && error.message === "Picker timeout") {
           setError("Picker niet afgerond. Selecteer fotos in het Google venster en klik op Gereed.");
+        } else if (error instanceof Error && error.message === "NO_MEDIA_ITEMS") {
+          setError("Google Picker gaf geen fotos terug. Controleer of je echt een foto selecteert en op Gereed klikt.");
+        } else if (error instanceof Error && error.message === "NO_ITEMS_IMPORTED") {
+          setError("Import afgerond, maar backend ontving 0 fotos.");
         } else {
-          setError("Google Photos Picker import mislukt.");
+          setError(getApiErrorMessage(error, "Google Photos Picker import mislukt."));
         }
       } finally {
         setImporting(false);
@@ -195,6 +201,7 @@ export default function App() {
   }
 
   async function runPhotosPickerFlow(accessToken: string) {
+    setInfo(null);
     const session = await api.post<PickerSessionResponse>(
       "/picker/sessions",
       { accessToken, maxItemCount: 50 },
@@ -262,20 +269,25 @@ export default function App() {
     } while (nextPageToken);
 
     if (importedItems.length === 0) {
-      throw new Error("No media items returned");
+      throw new Error("NO_MEDIA_ITEMS");
     }
 
-    await api.post(
+    const imported = await api.post<{ importedCount: number }>(
       "/photos/import-picker-selection",
       { items: importedItems },
       { headers: authHeader() }
     );
+    if (imported.data.importedCount <= 0) {
+      throw new Error("NO_ITEMS_IMPORTED");
+    }
 
     await fetchPhotos(selectedSpecies);
+    setInfo(`Import voltooid: ${imported.data.importedCount} foto(s) toegevoegd.`);
   }
 
   async function handleGoogleLogin(idToken: string) {
     setError(null);
+    setInfo(null);
     try {
       const response = await api.post<{ token: string; user: AuthUser }>("/auth/google/callback", {
         idToken
@@ -296,6 +308,7 @@ export default function App() {
 
   async function handleDevLogin() {
     setError(null);
+    setInfo(null);
     try {
       const response = await api.post<{ token: string; user: AuthUser }>("/auth/dev-login", {});
       setStoredToken(response.data.token);
@@ -321,6 +334,7 @@ export default function App() {
   }
 
   function startPickerImport() {
+    setInfo(null);
     if (!googleConfigured) {
       setError("Google Picker staat nog niet geconfigureerd. Zet eerst VITE_GOOGLE_CLIENT_ID.");
       return;
@@ -334,6 +348,7 @@ export default function App() {
     setStoredToken(null);
     setUser(null);
     setImporting(false);
+    setInfo(null);
   }
 
   const photoCount = useMemo(() => photos.length, [photos]);
@@ -390,6 +405,7 @@ export default function App() {
               </button>
             </div>
             {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+            {info ? <p className="mt-3 text-sm text-emerald-700">{info}</p> : null}
           </div>
         ) : (
           <div className="space-y-6">
@@ -528,9 +544,26 @@ export default function App() {
         )}
 
         {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
+        {info ? <p className="mt-4 text-sm text-emerald-700">{info}</p> : null}
       </section>
     </main>
   );
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof AxiosError) {
+    const apiError = error.response?.data?.error;
+    if (typeof apiError === "string" && apiError.trim().length > 0) {
+      return apiError;
+    }
+    if (typeof error.message === "string" && error.message.trim().length > 0) {
+      return error.message;
+    }
+  }
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallback;
 }
 
 function MetricCard({
