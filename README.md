@@ -10,19 +10,32 @@ vissen/
 
 ## Quick start
 
-1. Kopieer `backend/.env.example` naar `backend/.env` en vul je PostgreSQL URL in.
-2. Kopieer `frontend/.env.example` naar `frontend/.env` en vul je Google Client ID in.
-3. Installeer dependencies:
+1. Installeer dependencies (root):
    - `npm install`
-   - `npm install --workspace frontend`
-   - `npm install --workspace backend`
-4. Prisma:
+2. Maak env-bestanden aan:
+   - `backend/.env` (kopie van `backend/.env.example`, vul je PostgreSQL URL in)
+   - `frontend/.env` (kopie van `frontend/.env.example`, vul je Google Client ID in)
+3. Prisma setup (backend):
    - `npm run prisma:generate --workspace backend`
    - `npm run prisma:migrate --workspace backend -- --name init`
    - `npm run prisma:seed --workspace backend`
-5. Start:
-   - Frontend: `npm run dev --workspace frontend`
-   - Backend: `npm run dev --workspace backend`
+
+## Ontwikkelen
+
+Start backend en frontend in twee terminals:
+
+- Terminal 1: `npm run dev --workspace backend`
+- Terminal 2: `npm run dev --workspace frontend`
+
+Of gebruik root-scripts:
+
+- Backend: `npm run dev:backend`
+- Frontend: `npm run dev:frontend`
+
+## Build
+
+- Frontend build: `npm run build --workspace frontend`
+- Backend build: `npm run build --workspace backend`
 
 ## Auth endpoints (stap 3)
 
