@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GoogleLogin, useGoogleLogin } from "@react-oauth/google";
 import { AxiosError } from "axios";
 import {
@@ -119,6 +119,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
   const [importing, setImporting] = useState(false);
+  const pickerPopupRef = useRef<Window | null>(null);
 
   useEffect(() => {
     api
@@ -147,6 +148,7 @@ export default function App() {
       try {
         await runPhotosPickerFlow(tokenResponse.access_token);
       } catch (error) {
+        closePickerPopup();
         if (error instanceof Error && error.message === "POPUP_BLOCKED") {
           setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
         } else if (error instanceof Error && error.message === "Picker timeout") {
@@ -163,6 +165,7 @@ export default function App() {
       }
     },
     onError: () => {
+      closePickerPopup();
       setImporting(false);
       setError("Google Photos toestemming mislukt.");
     }
@@ -208,10 +211,16 @@ export default function App() {
       { headers: authHeader() }
     );
 
-    const pickerWindow = window.open(session.data.pickerUri, "_blank", "noopener,noreferrer");
-    if (!pickerWindow) {
-      throw new Error("POPUP_BLOCKED");
+    let pickerWindow = pickerPopupRef.current;
+    if (pickerWindow && !pickerWindow.closed) {
+      pickerWindow.location.href = session.data.pickerUri;
+    } else {
+      pickerWindow = window.open(session.data.pickerUri, "_blank", "noopener,noreferrer");
+      if (!pickerWindow) {
+        throw new Error("POPUP_BLOCKED");
+      }
     }
+    pickerPopupRef.current = pickerWindow;
     pickerWindow.focus();
 
     const pollIntervalMs = Math.max(1000, parseDurationToMs(session.data.pollingConfig?.pollInterval));
@@ -285,6 +294,19 @@ export default function App() {
     setInfo(`Import voltooid: ${imported.data.importedCount} foto(s) toegevoegd.`);
   }
 
+  function closePickerPopup() {
+    const popup = pickerPopupRef.current;
+    pickerPopupRef.current = null;
+    if (!popup || popup.closed) {
+      return;
+    }
+    try {
+      popup.close();
+    } catch {
+      // Ignore close errors from browser popup policies.
+    }
+  }
+
   async function handleGoogleLogin(idToken: string) {
     setError(null);
     setInfo(null);
@@ -339,6 +361,15 @@ export default function App() {
       setError("Google Picker staat nog niet geconfigureerd. Zet eerst VITE_GOOGLE_CLIENT_ID.");
       return;
     }
+    const popup = window.open("", "_blank", "noopener,noreferrer");
+    if (!popup) {
+      setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
+      return;
+    }
+    popup.document.title = "Google Picker";
+    popup.document.body.innerHTML =
+      "<p style='font-family: sans-serif; padding: 16px;'>Google Picker wordt geopend...</p>";
+    pickerPopupRef.current = popup;
     setError(null);
     setImporting(true);
     pickerLogin();
