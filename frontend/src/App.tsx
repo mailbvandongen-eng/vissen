@@ -144,8 +144,14 @@ export default function App() {
     onSuccess: async (tokenResponse) => {
       try {
         await runPhotosPickerFlow(tokenResponse.access_token);
-      } catch {
-        setError("Google Photos Picker import mislukt.");
+      } catch (error) {
+        if (error instanceof Error && error.message === "POPUP_BLOCKED") {
+          setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
+        } else if (error instanceof Error && error.message === "Picker timeout") {
+          setError("Picker niet afgerond. Selecteer fotos in het Google venster en klik op Gereed.");
+        } else {
+          setError("Google Photos Picker import mislukt.");
+        }
       } finally {
         setImporting(false);
       }
@@ -195,10 +201,14 @@ export default function App() {
       { headers: authHeader() }
     );
 
-    window.open(session.data.pickerUri, "_blank", "noopener,noreferrer");
+    const pickerWindow = window.open(session.data.pickerUri, "_blank", "noopener,noreferrer");
+    if (!pickerWindow) {
+      throw new Error("POPUP_BLOCKED");
+    }
+    pickerWindow.focus();
 
     const pollIntervalMs = Math.max(1000, parseDurationToMs(session.data.pollingConfig?.pollInterval));
-    const timeoutMs = Math.max(30_000, parseDurationToMs(session.data.pollingConfig?.timeoutIn));
+    const timeoutMs = Math.min(120_000, Math.max(30_000, parseDurationToMs(session.data.pollingConfig?.timeoutIn)));
     const startedAt = Date.now();
 
     let mediaSet = session.data.mediaItemsSet;
