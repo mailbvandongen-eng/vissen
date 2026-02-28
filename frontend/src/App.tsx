@@ -273,7 +273,14 @@ export default function App() {
       setStoredToken(response.data.token);
       setUser(response.data.user);
     } catch {
-      setError("Inloggen met Google is mislukt.");
+      try {
+        const fallback = await api.post<{ token: string; user: AuthUser }>("/auth/dev-login", {});
+        setStoredToken(fallback.data.token);
+        setUser(fallback.data.user);
+        setError("Google login is mislukt. Je bent automatisch ingelogd met Dev login (lokaal).");
+      } catch {
+        setError("Inloggen met Google is mislukt.");
+      }
     }
   }
 
