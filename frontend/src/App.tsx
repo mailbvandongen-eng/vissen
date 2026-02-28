@@ -161,6 +161,7 @@ export default function App() {
           setError(getApiErrorMessage(error, "Google Photos Picker import mislukt."));
         }
       } finally {
+        closePickerPopup();
         setImporting(false);
       }
     },
@@ -268,7 +269,7 @@ export default function App() {
               item.location?.latitude && item.location?.longitude
                 ? `${item.location.latitude.toFixed(4)}, ${item.location.longitude.toFixed(4)}`
                 : "Onbekende locatie",
-            species: defaultSpecies
+            species: selectedSpecies
           };
         })
         .filter((item): item is ImportPayloadItem => item !== null);

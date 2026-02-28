@@ -39,6 +39,13 @@ await app.register(cors, {
   }
 });
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return "Unknown error";
+}
+
 app.get("/health", async () => {
   return { ok: true };
 });
@@ -141,7 +148,7 @@ app.post("/auth/google/callback", async (request, reply) => {
     };
   } catch (error) {
     request.log.error({ error }, "Google auth failed");
-    return reply.code(401).send({ error: "Google login failed" });
+    return reply.code(401).send({ error: `Google login failed: ${getErrorMessage(error)}` });
   }
 });
 
@@ -205,7 +212,7 @@ app.post("/picker/sessions", { preHandler: [requireAuth] }, async (request, repl
     return session;
   } catch (error) {
     request.log.error({ error }, "Failed to create picker session");
-    return reply.code(502).send({ error: "Failed to create picker session" });
+    return reply.code(502).send({ error: `Failed to create picker session: ${getErrorMessage(error)}` });
   }
 });
 
@@ -221,7 +228,7 @@ app.post("/picker/sessions/:id", { preHandler: [requireAuth] }, async (request, 
     return session;
   } catch (error) {
     request.log.error({ error }, "Failed to fetch picker session");
-    return reply.code(502).send({ error: "Failed to fetch picker session" });
+    return reply.code(502).send({ error: `Failed to fetch picker session: ${getErrorMessage(error)}` });
   }
 });
 
@@ -237,7 +244,7 @@ app.post("/picker/sessions/:id/media-items", { preHandler: [requireAuth] }, asyn
     return result;
   } catch (error) {
     request.log.error({ error }, "Failed to list picker media items");
-    return reply.code(502).send({ error: "Failed to list picker media items" });
+    return reply.code(502).send({ error: `Failed to list picker media items: ${getErrorMessage(error)}` });
   }
 });
 
