@@ -46,3 +46,13 @@ Of gebruik root-scripts:
 ## Opmerking
 
 Google login gebruikt de Google ID token van de frontend en zet die om naar een app-JWT.
+
+## Security (belangrijk)
+
+In een eerdere commit stonden `.env` bestanden in de repositorygeschiedenis. Ga ervan uit dat die secrets gecompromitteerd zijn en roteer:
+
+- database wachtwoord / connection string
+- `APP_JWT_SECRET`
+- Google OAuth client secret(s) en eventueel client ID
+
+Gebruik daarna alleen `.env.example` in git en houd echte `.env` lokaal of in je deployment secret manager.
