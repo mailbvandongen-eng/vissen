@@ -19,7 +19,13 @@
       "Bash(timeout 10 npx tsx:*)",
       "Bash(timeout 8 npm run dev:*)",
       "Bash(npm run dev)",
-      "Bash(netstat:*)"
+      "Bash(netstat:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm search:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd Vercel deployment config and fix build\n\n- Refactor server.ts into reusable app.ts for serverless deployment\n- Add api/index.ts Vercel serverless function entry point\n- Add vercel.json with rewrites and function config\n- Add exif-parser type declarations to fix TypeScript build\n- Update build script to run prisma generate before tsc\n- Update frontend API baseUrl to use relative paths for Vercel\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")"
     ]
   }
 }
