@@ -7,6 +7,7 @@ import { prisma } from "./lib/prisma.js";
 import { signAppToken } from "./lib/jwt.js";
 import { requireAuth, requireRole } from "./plugins/auth.js";
 import {
+  importUploadedPhoto,
   importPickerSelection,
   listPhotos,
   speciesDashboard,
@@ -65,6 +66,15 @@ export async function buildApp() {
     return { ok: true };
   });
 
+  // Debug endpoint
+  app.get("/api/debug/env", async () => {
+    return {
+      googleClientId: env.GOOGLE_CLIENT_ID?.slice(0, 25) + "...",
+      hasJwtSecret: !!env.APP_JWT_SECRET,
+      frontendOrigin: env.FRONTEND_ORIGIN
+    };
+  });
+
   app.post("/api/auth/dev-login", async (request, reply) => {
     if (!env.DEV_AUTH_BYPASS) {
       return reply.code(403).send({ error: "Dev login disabled" });
@@ -121,6 +131,17 @@ export async function buildApp() {
 
   const speciesBodySchema = z.object({
     species: z.enum(["Snoek", "Baars", "Karper", "Snoekbaars"])
+  });
+
+  const uploadPhotoBodySchema = z.object({
+    fileName: z.string().min(1),
+    mimeType: z.string().min(1),
+    dataUrl: z.string().min(1),
+    takenAt: z.string().datetime().optional(),
+    lat: z.number().optional(),
+    lon: z.number().optional(),
+    locationName: z.string().optional(),
+    species: z.enum(["Snoek", "Baars", "Karper", "Snoekbaars"]).optional()
   });
 
   const pickerAuthBodySchema = z.object({
@@ -200,6 +221,21 @@ export async function buildApp() {
       parsed.data.accessToken
     );
     return { importedCount: imported.length, photos: imported };
+  });
+
+  app.post("/api/photos/upload", { preHandler: [requireAuth] }, async (request, reply) => {
+    const parsed = uploadPhotoBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid payload" });
+    }
+
+    try {
+      const photo = await importUploadedPhoto(request.user!.id, request.user!.email, parsed.data);
+      return { photo };
+    } catch (error) {
+      request.log.error({ error }, "Failed to upload photo");
+      return reply.code(400).send({ error: getErrorMessage(error) });
+    }
   });
 
   app.get("/api/photos", { preHandler: [requireAuth] }, async (request) => {

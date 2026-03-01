@@ -17,6 +17,45 @@ export type ProcessedImage = {
   exif: ExifResult;
 };
 
+async function processAndUploadBuffer(
+  buffer: Buffer,
+  sourceItemId: string
+): Promise<ProcessedImage> {
+  const hash = crypto.createHash("md5").update(sourceItemId).digest("hex").slice(0, 12);
+  const filename = `${hash}.jpg`;
+  const thumbnailFilename = `${hash}_thumb.jpg`;
+
+  // Extract EXIF before processing (sharp can strip it)
+  const exif = extractExif(buffer);
+  console.log(`EXIF extracted:`, exif);
+
+  // Process main image (max 1200px, quality 80)
+  const mainBuffer = await sharp(buffer)
+    .rotate()
+    .resize(1200, 1200, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 80 })
+    .toBuffer();
+
+  // Create thumbnail (300px)
+  const thumbBuffer = await sharp(buffer)
+    .rotate()
+    .resize(300, 300, { fit: "cover" })
+    .jpeg({ quality: 70 })
+    .toBuffer();
+
+  console.log(`Uploading to Supabase: ${filename}`);
+  const mainUrl = await uploadPhoto(mainBuffer, filename);
+  const thumbUrl = await uploadPhoto(thumbBuffer, thumbnailFilename);
+
+  console.log(`Uploaded: ${mainUrl}`);
+
+  return {
+    imageUrl: mainUrl,
+    thumbnailUrl: thumbUrl,
+    exif,
+  };
+}
+
 function extractExif(buffer: Buffer): ExifResult {
   try {
     const parser = ExifParser.create(buffer);
@@ -55,11 +94,6 @@ export async function downloadAndProcessImage(
   sourceItemId: string,
   accessToken: string
 ): Promise<ProcessedImage> {
-  // Generate unique filename
-  const hash = crypto.createHash("md5").update(sourceItemId).digest("hex").slice(0, 12);
-  const filename = `${hash}.jpg`;
-  const thumbnailFilename = `${hash}_thumb.jpg`;
-
   // Download image from Google Photos
   // Google Photos baseUrl requires suffix: =d for download, =w{width}-h{height} for specific size
   let downloadUrl = imageUrl;
@@ -80,34 +114,12 @@ export async function downloadAndProcessImage(
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // Extract EXIF before processing (sharp can strip it)
-  const exif = extractExif(buffer);
-  console.log(`EXIF extracted:`, exif);
+  return processAndUploadBuffer(buffer, sourceItemId);
+}
 
-  // Process main image (max 1200px, quality 80)
-  const mainBuffer = await sharp(buffer)
-    .rotate() // Auto-rotate based on EXIF
-    .resize(1200, 1200, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 80 })
-    .toBuffer();
-
-  // Create thumbnail (300px)
-  const thumbBuffer = await sharp(buffer)
-    .rotate()
-    .resize(300, 300, { fit: "cover" })
-    .jpeg({ quality: 70 })
-    .toBuffer();
-
-  // Upload to Supabase Storage
-  console.log(`Uploading to Supabase: ${filename}`);
-  const mainUrl = await uploadPhoto(mainBuffer, filename);
-  const thumbUrl = await uploadPhoto(thumbBuffer, thumbnailFilename);
-
-  console.log(`Uploaded: ${mainUrl}`);
-
-  return {
-    imageUrl: mainUrl,
-    thumbnailUrl: thumbUrl,
-    exif,
-  };
+export async function processUploadedImage(
+  buffer: Buffer,
+  sourceItemId: string
+): Promise<ProcessedImage> {
+  return processAndUploadBuffer(buffer, sourceItemId);
 }

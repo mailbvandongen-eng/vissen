@@ -1,5 +1,6 @@
 import { prisma } from "../lib/prisma.js";
-import { downloadAndProcessImage } from "./image-processor.js";
+import { randomUUID } from "node:crypto";
+import { downloadAndProcessImage, processUploadedImage } from "./image-processor.js";
 import { fetchHistoricalWeather } from "./weather-api.js";
 
 export type SpeciesName = "Snoek" | "Baars" | "Karper" | "Snoekbaars";
@@ -30,6 +31,17 @@ export type PickerSelectionInput = {
   takenAt: string;
   lat: number;
   lon: number;
+  locationName?: string;
+  species?: SpeciesName;
+};
+
+export type UploadPhotoInput = {
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  takenAt?: string;
+  lat?: number;
+  lon?: number;
   locationName?: string;
   species?: SpeciesName;
 };
@@ -142,6 +154,85 @@ export async function importPickerSelection(
   }
 
   return imported;
+}
+
+export async function importUploadedPhoto(
+  userId: string,
+  userEmail: string,
+  input: UploadPhotoInput
+): Promise<PhotoRecord> {
+  if (!speciesInitialized) {
+    await ensureSpecies();
+    speciesInitialized = true;
+  }
+
+  if (!input.mimeType.startsWith("image/")) {
+    throw new Error("Alleen afbeeldingsbestanden zijn toegestaan.");
+  }
+
+  const match = input.dataUrl.match(/^data:(.+);base64,(.+)$/);
+  if (!match) {
+    throw new Error("Ongeldig afbeeldingsformaat ontvangen.");
+  }
+
+  const [, mimeType, base64Data] = match;
+  if (!mimeType.startsWith("image/")) {
+    throw new Error("Alleen afbeeldingsbestanden zijn toegestaan.");
+  }
+
+  const sourceItemId = `upload-${randomUUID()}`;
+  const buffer = Buffer.from(base64Data, "base64");
+  const processed = await processUploadedImage(buffer, sourceItemId);
+
+  const takenAt = processed.exif.takenAt ?? (input.takenAt ? new Date(input.takenAt) : new Date());
+  const lat = processed.exif.lat ?? input.lat ?? 52.1;
+  const lon = processed.exif.lon ?? input.lon ?? 5.3;
+  const weather = await fetchHistoricalWeather(lat, lon, takenAt);
+
+  const speciesName = input.species ?? "Snoek";
+  const species = await prisma.species.findUnique({
+    where: { slug: speciesName.toLowerCase() },
+  });
+
+  const photo = await prisma.photo.create({
+    data: {
+      userId,
+      sourceItemId,
+      imageUrl: processed.imageUrl,
+      thumbnailUrl: processed.thumbnailUrl,
+      takenAt,
+      lat,
+      lon,
+      weatherData: {
+        create: {
+          temperatureC: weather.tempC,
+          pressureHpa: weather.pressureHpa,
+          windKph: weather.windKph,
+          precipitation: weather.precipitation,
+          weatherCode: weather.weatherCode,
+        },
+      },
+      speciesLinks: species
+        ? {
+            create: {
+              speciesId: species.id,
+              manualOverride: true,
+            },
+          }
+        : undefined,
+    },
+    include: {
+      user: true,
+      weatherData: true,
+      speciesLinks: { include: { species: true } },
+    },
+  });
+
+  void userEmail;
+  void input.fileName;
+  void input.locationName;
+
+  return mapToPhotoRecord(photo);
 }
 
 // List ALL photos (not filtered by user - everyone sees everything)

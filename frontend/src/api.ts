@@ -1,7 +1,7 @@
 import axios from "axios";
 
-// Use VITE_API_URL for local dev, otherwise use /api for Vercel
-const baseURL = import.meta.env.VITE_API_URL || "/api";
+const baseURL = import.meta.env.VITE_API_URL?.trim() || "/api";
+const apiKey = import.meta.env.VITE_API_KEY?.trim();
 
 export const api = axios.create({
   baseURL
@@ -21,9 +21,14 @@ export function setStoredToken(token: string | null) {
 
 export function authHeader() {
   const token = getStoredToken();
-  if (!token) {
-    return {};
-  }
-  return { Authorization: `Bearer ${token}` };
-}
+  const headers: Record<string, string> = {};
 
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
+  }
+
+  return headers;
+}

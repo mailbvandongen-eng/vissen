@@ -14,6 +14,7 @@ body {
   margin: 0;
   font-family: "Manrope", sans-serif;
   color: #0f172a;
+  background: #e7f2ff;
 }
 
 h1,
@@ -24,8 +25,8 @@ h3 {
 
 .bg-aurora {
   background:
-    radial-gradient(circle at 12% 18%, rgba(17, 119, 204, 0.28), transparent 34%),
-    radial-gradient(circle at 90% 10%, rgba(22, 163, 74, 0.18), transparent 30%),
-    radial-gradient(circle at 30% 90%, rgba(245, 158, 11, 0.2), transparent 34%),
-    linear-gradient(145deg, #f8fafc 0%, #dbeafe 48%, #ecfeff 100%);
+    radial-gradient(circle at 10% 12%, rgba(14, 165, 233, 0.2), transparent 28%),
+    radial-gradient(circle at 88% 14%, rgba(251, 146, 60, 0.18), transparent 24%),
+    radial-gradient(circle at 24% 82%, rgba(34, 197, 94, 0.14), transparent 28%),
+    linear-gradient(160deg, #eef7ff 0%, #d9ecff 46%, #f6fbff 100%);
 }

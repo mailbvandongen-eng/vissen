@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { GoogleLogin, useGoogleLogin } from "@react-oauth/google";
 import { AxiosError } from "axios";
 import {
@@ -6,10 +6,10 @@ import {
   CloudSun,
   Fish,
   Gauge,
+  ImagePlus,
   LoaderCircle,
-  ShieldCheck,
+  LogOut,
   Thermometer,
-  UserCircle2,
   Wind
 } from "lucide-react";
 import { api, authHeader, setStoredToken } from "./api";
@@ -18,6 +18,7 @@ type AuthUser = {
   id: string;
   email: string;
   role: "MEMBER" | "ADMIN";
+  name?: string | null;
 };
 
 type SpeciesName = "Snoek" | "Baars" | "Karper" | "Snoekbaars";
@@ -66,8 +67,6 @@ type PickerMediaItemsResponse = {
     createTime?: string;
     mediaFile?: {
       baseUrl?: string;
-      mimeType?: string;
-      filename?: string;
     };
     location?: {
       latitude?: number;
@@ -86,6 +85,12 @@ type ImportPayloadItem = {
   lon: number;
   locationName: string;
   species: SpeciesName;
+};
+
+type PendingPhoto = {
+  file: File;
+  source: "camera" | "upload";
+  previewUrl: string;
 };
 
 const speciesOptions: SpeciesName[] = ["Snoek", "Baars", "Karper", "Snoekbaars"];
@@ -128,6 +133,11 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
   const [loadingPhotos, setLoadingPhotos] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [savingUpload, setSavingUpload] = useState(false);
+  const [pendingPhoto, setPendingPhoto] = useState<PendingPhoto | null>(null);
+
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const pickerPopupRef = useRef<Window | null>(null);
 
   useEffect(() => {
@@ -150,24 +160,32 @@ export default function App() {
     void fetchPhotos(selectedSpecies);
   }, [user, selectedSpecies]);
 
+  useEffect(() => {
+    return () => {
+      if (pendingPhoto) {
+        URL.revokeObjectURL(pendingPhoto.previewUrl);
+      }
+    };
+  }, [pendingPhoto]);
+
   const pickerLogin = useGoogleLogin({
     flow: "implicit",
     scope: "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
     onSuccess: async (tokenResponse) => {
       try {
         await runPhotosPickerFlow(tokenResponse.access_token);
-      } catch (error) {
+      } catch (currentError) {
         closePickerPopup();
-        if (error instanceof Error && error.message === "POPUP_BLOCKED") {
-          setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
-        } else if (error instanceof Error && error.message === "Picker timeout") {
-          setError("Picker niet afgerond. Selecteer fotos in het Google venster en klik op Gereed.");
-        } else if (error instanceof Error && error.message === "NO_MEDIA_ITEMS") {
-          setError("Google Picker gaf geen fotos terug. Controleer of je echt een foto selecteert en op Gereed klikt.");
-        } else if (error instanceof Error && error.message === "NO_ITEMS_IMPORTED") {
-          setError("Import afgerond, maar backend ontving 0 fotos.");
+        if (currentError instanceof Error && currentError.message === "POPUP_BLOCKED") {
+          setError("Browser blokkeert de Google Foto's-popup. Sta pop-ups toe en probeer opnieuw.");
+        } else if (currentError instanceof Error && currentError.message === "Picker timeout") {
+          setError("De picker is niet afgerond. Selecteer een of meer foto's en klik op Gereed.");
+        } else if (currentError instanceof Error && currentError.message === "NO_MEDIA_ITEMS") {
+          setError("Google Foto's gaf geen foto's terug. Kies echt een foto en probeer opnieuw.");
+        } else if (currentError instanceof Error && currentError.message === "NO_ITEMS_IMPORTED") {
+          setError("Google Foto's gaf wel selectie terug, maar er is niets opgeslagen.");
         } else {
-          setError(getApiErrorMessage(error, "Google Photos Picker import mislukt."));
+          setError(getApiErrorMessage(currentError, "Google Foto's import mislukt."));
         }
       } finally {
         closePickerPopup();
@@ -177,9 +195,11 @@ export default function App() {
     onError: () => {
       closePickerPopup();
       setImporting(false);
-      setError("Google Photos toestemming mislukt.");
+      setError("Toestemming voor Google Foto's is afgebroken.");
     }
   });
+
+  const photoCount = useMemo(() => photos.length, [photos]);
 
   async function fetchPhotos(species?: SpeciesName) {
     setLoadingPhotos(true);
@@ -191,8 +211,8 @@ export default function App() {
       });
       setPhotos(response.data.photos);
       await fetchDashboard(species ?? selectedSpecies);
-    } catch {
-      setError("Fotos laden mislukt.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Foto's laden mislukt."));
     } finally {
       setLoadingPhotos(false);
     }
@@ -297,6 +317,7 @@ export default function App() {
       { accessToken, items: importedItems },
       { headers: authHeader() }
     );
+
     if (imported.data.importedCount <= 0) {
       throw new Error("NO_ITEMS_IMPORTED");
     }
@@ -314,7 +335,7 @@ export default function App() {
     try {
       popup.close();
     } catch {
-      // Ignore close errors from browser popup policies.
+      // Ignore browser popup policy close issues.
     }
   }
 
@@ -327,14 +348,15 @@ export default function App() {
       });
       setStoredToken(response.data.token);
       setUser(response.data.user);
+      setInfo("Je bent ingelogd.");
     } catch {
       try {
         const fallback = await api.post<{ token: string; user: AuthUser }>("/auth/dev-login", {});
         setStoredToken(fallback.data.token);
         setUser(fallback.data.user);
-        setError("Google login is mislukt. Je bent automatisch ingelogd met Dev login (lokaal).");
-      } catch {
-        setError("Inloggen met Google is mislukt.");
+        setInfo("Google login faalde, daarom is de lokale dev-login gebruikt.");
+      } catch (currentError) {
+        setError(getApiErrorMessage(currentError, "Inloggen mislukt."));
       }
     }
   }
@@ -346,12 +368,14 @@ export default function App() {
       const response = await api.post<{ token: string; user: AuthUser }>("/auth/dev-login", {});
       setStoredToken(response.data.token);
       setUser(response.data.user);
-    } catch {
-      setError("Dev login mislukt. Zet DEV_AUTH_BYPASS=true in backend/.env.");
+      setInfo("Je bent ingelogd.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Dev-login mislukt. Zet DEV_AUTH_BYPASS=true in backend/.env."));
     }
   }
 
   async function updateSpecies(photoId: string, species: SpeciesName) {
+    setError(null);
     try {
       await api.post(
         `/photos/${photoId}/species`,
@@ -361,60 +385,153 @@ export default function App() {
         }
       );
       await fetchPhotos(selectedSpecies);
-    } catch {
-      setError("Soort aanpassen mislukt.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Soort aanpassen mislukt."));
     }
   }
 
   function startPickerImport() {
     setInfo(null);
     if (!googleConfigured) {
-      setError("Google Picker staat nog niet geconfigureerd. Zet eerst VITE_GOOGLE_CLIENT_ID.");
+      setError("Google Foto's staat nog niet geconfigureerd. Zet VITE_GOOGLE_CLIENT_ID in frontend/.env.");
       return;
     }
-    // Don't pre-open popup - let Google OAuth open it directly (avoids double-popup blocking)
     setError(null);
     setImporting(true);
     pickerLogin();
   }
 
+  function openCameraCapture() {
+    setError(null);
+    cameraInputRef.current?.click();
+  }
+
+  function openUploadPicker() {
+    setError(null);
+    uploadInputRef.current?.click();
+  }
+
+  function handleFileSelected(source: "camera" | "upload", event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (pendingPhoto) {
+      URL.revokeObjectURL(pendingPhoto.previewUrl);
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setPendingPhoto({ file, source, previewUrl });
+    setInfo(source === "camera" ? "Foto gekozen. Controleer de preview en sla daarna op." : "Bestand gekozen. Controleer de preview en sla daarna op.");
+    event.target.value = "";
+  }
+
+  async function savePendingPhoto() {
+    if (!pendingPhoto) {
+      setError("Kies eerst een foto.");
+      return;
+    }
+
+    setSavingUpload(true);
+    setError(null);
+    setInfo(null);
+
+    try {
+      const dataUrl = await fileToDataUrl(pendingPhoto.file);
+      await api.post(
+        "/photos/upload",
+        {
+          fileName: pendingPhoto.file.name,
+          mimeType: pendingPhoto.file.type || "image/jpeg",
+          dataUrl,
+          species: selectedSpecies
+        },
+        { headers: authHeader() }
+      );
+
+      URL.revokeObjectURL(pendingPhoto.previewUrl);
+      setPendingPhoto(null);
+      await fetchPhotos(selectedSpecies);
+      setInfo("Foto opgeslagen en toegevoegd aan je overzicht.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Foto opslaan mislukt."));
+    } finally {
+      setSavingUpload(false);
+    }
+  }
+
+  function clearPendingPhoto() {
+    if (!pendingPhoto) {
+      return;
+    }
+    URL.revokeObjectURL(pendingPhoto.previewUrl);
+    setPendingPhoto(null);
+    setInfo(null);
+  }
+
   function logout() {
+    closePickerPopup();
+    clearPendingPhoto();
     setStoredToken(null);
     setUser(null);
     setImporting(false);
     setInfo(null);
+    setError(null);
   }
 
-  const photoCount = useMemo(() => photos.length, [photos]);
-
   return (
-    <main className="min-h-screen bg-aurora px-4 py-6 sm:px-8">
-      <section className="mx-auto max-w-6xl rounded-3xl border border-white/30 bg-white/80 p-5 shadow-xl backdrop-blur md:p-8">
-        <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
+    <main className="min-h-screen bg-aurora px-4 py-6 sm:px-6 lg:px-8">
+      <section className="mx-auto max-w-6xl rounded-[2rem] border border-white/40 bg-white/80 p-4 shadow-[0_25px_80px_rgba(15,23,42,0.10)] backdrop-blur sm:p-6 lg:p-8">
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(event) => handleFileSelected("camera", event)}
+        />
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => handleFileSelected("upload", event)}
+        />
+
+        <header className="mb-6 flex flex-col gap-4 rounded-[1.75rem] border border-white/70 bg-white/85 p-5 shadow-sm md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-brand-700">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700">
               <Fish className="h-4 w-4" />
-              Visfoto Dashboard
+              VisApp
             </div>
-            <h1 className="text-3xl font-bold text-slate-900">VisApp</h1>
-            <p className="text-slate-600">Google login, Photos Picker import en soortanalyse.</p>
+            <h1 className="text-3xl font-bold text-slate-900">Foto's eerst, details daarna</h1>
+            <p className="mt-2 max-w-2xl text-sm text-slate-600">
+              Maak een foto, upload een bestand of kies direct uit Google Foto&apos;s. Daarna zie je de preview en komt de foto meteen terug in je overzicht.
+            </p>
           </div>
 
-          <div className="flex items-center gap-2 rounded-2xl bg-white px-4 py-3 shadow-sm">
-            <UserCircle2 className="h-5 w-5 text-brand-600" />
-            <div className="text-sm">
-              <p className="font-semibold text-slate-800">{user?.email ?? "Niet ingelogd"}</p>
-              <p className="text-slate-500">Rol: {user?.role ?? "GUEST"}</p>
+          {user ? (
+            <div className="flex items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-white">
+              <div className="text-sm">
+                <p className="font-semibold">{user.name || user.email}</p>
+                <p className="text-slate-300">{user.role}</p>
+              </div>
+              <button
+                onClick={logout}
+                className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/20 px-4 text-sm font-semibold text-white transition hover:bg-white/10"
+              >
+                <LogOut className="mr-2 h-4 w-4" /> Uitloggen
+              </button>
             </div>
-          </div>
-        </div>
+          ) : null}
+        </header>
 
         {!user ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="mb-4 text-slate-600">
-              Login om fotos te importeren via Google Photos Picker en dashboards te zien.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
+          <section className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-2xl font-bold text-slate-900">Eerst inloggen</h2>
+            <p className="mt-2 text-sm text-slate-600">Log in om je foto&apos;s te importeren, op te slaan en terug te zien in je galerij.</p>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
               {googleConfigured ? (
                 <GoogleLogin
                   onSuccess={(credentialResponse) => {
@@ -424,26 +541,111 @@ export default function App() {
                       setError("Google gaf geen token terug.");
                     }
                   }}
-                  onError={() => setError("Google login popup is afgebroken.")}
+                  onError={() => setError("Google login is afgebroken.")}
                 />
               ) : (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  Google login uitgeschakeld: zet `VITE_GOOGLE_CLIENT_ID` in `frontend/.env`.
+                <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Google login staat uit. Zet `VITE_GOOGLE_CLIENT_ID` in `frontend/.env`.
                 </div>
               )}
               <button
                 onClick={() => void handleDevLogin()}
-                className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-brand-500 hover:text-brand-700"
+                className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:border-slate-500"
               >
-                Dev login (lokaal)
+                Dev-login
               </button>
             </div>
-            {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
-            {info ? <p className="mt-3 text-sm text-emerald-700">{info}</p> : null}
-          </div>
+          </section>
         ) : (
           <div className="space-y-6">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <section className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">1. Kies je foto</h2>
+                  <p className="text-sm text-slate-600">Deze acties staan bewust bovenaan: hier begint de hele flow.</p>
+                </div>
+                <p className="text-sm text-slate-500">Daarna opslaan en direct terugzien in je galerij.</p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-3">
+                <ActionButton
+                  icon={<Camera className="h-6 w-6" />}
+                  title="Foto maken"
+                  subtitle="Op mobiel opent dit direct je camera."
+                  onClick={openCameraCapture}
+                />
+                <ActionButton
+                  icon={<ImagePlus className="h-6 w-6" />}
+                  title="Foto uploaden"
+                  subtitle="Kies een bestaande foto van je apparaat."
+                  onClick={openUploadPicker}
+                />
+                <ActionButton
+                  icon={importing ? <LoaderCircle className="h-6 w-6 animate-spin" /> : <CloudSun className="h-6 w-6" />}
+                  title="Google Foto's"
+                  subtitle="Open de echte picker en kies daar je foto's."
+                  onClick={startPickerImport}
+                  disabled={importing}
+                />
+              </div>
+            </section>
+
+            {pendingPhoto ? (
+              <section className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr] lg:items-start">
+                  <div className="overflow-hidden rounded-[1.5rem] bg-slate-100">
+                    <img src={pendingPhoto.previewUrl} alt="Geselecteerde foto" className="h-full max-h-[28rem] w-full object-cover" />
+                  </div>
+                  <div className="grid gap-4">
+                    <div>
+                      <h2 className="text-2xl font-bold text-slate-900">2. Controleer en sla op</h2>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Bron: {pendingPhoto.source === "camera" ? "camera" : "bestand upload"}. De foto wordt na opslaan meteen zichtbaar onderaan.
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-100 p-4">
+                      <label className="mb-2 block text-sm font-semibold text-slate-700">Soort voor deze foto</label>
+                      <div className="flex flex-wrap gap-2">
+                        {speciesOptions.map((species) => {
+                          const active = species === selectedSpecies;
+                          return (
+                            <button
+                              key={species}
+                              type="button"
+                              onClick={() => setSelectedSpecies(species)}
+                              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                                active ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-200"
+                              }`}
+                            >
+                              {species}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={savePendingPhoto}
+                        disabled={savingUpload}
+                        className="inline-flex h-12 items-center justify-center rounded-2xl bg-slate-900 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                      >
+                        {savingUpload ? "Opslaan..." : "Opslaan in galerij"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearPendingPhoto}
+                        className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Annuleren
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            <section className="grid gap-3 sm:grid-cols-3">
               <MetricCard
                 icon={<Gauge className="h-5 w-5 text-amber-700" />}
                 title="Gem. luchtdruk"
@@ -462,94 +664,67 @@ export default function App() {
                 value={dashboard?.averages.windKph !== null ? `${dashboard?.averages.windKph} km/u` : "-"}
                 tone="sky"
               />
-            </div>
+            </section>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-slate-900">Soorten</h2>
-                <button
-                  onClick={startPickerImport}
-                  disabled={importing}
-                  className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400"
-                >
-                  {importing ? (
-                    <>
-                      <LoaderCircle className="mr-1 inline-block h-4 w-4 animate-spin" />
-                      Import bezig
-                    </>
-                  ) : (
-                    <>
-                      <Camera className="mr-1 inline-block h-4 w-4" />
-                      Importeer fotos
-                    </>
-                  )}
-                </button>
+            <section className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">3. Je foto's</h2>
+                  <p className="text-sm text-slate-600">Hier zie je direct wat er al is opgeslagen.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {speciesOptions.map((species) => {
+                    const active = species === selectedSpecies;
+                    return (
+                      <button
+                        key={species}
+                        type="button"
+                        onClick={() => setSelectedSpecies(species)}
+                        className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                          active ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        {species}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {speciesOptions.map((species) => {
-                  const active = species === selectedSpecies;
-                  return (
-                    <button
-                      key={species}
-                      onClick={() => setSelectedSpecies(species)}
-                      className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                        active
-                          ? "bg-brand-700 text-white shadow"
-                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                      }`}
-                    >
-                      {species}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <CloudSun className="h-5 w-5 text-brand-600" />
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Overzicht {selectedSpecies} ({photoCount} fotos)
-                </h2>
-              </div>
+              <div className="mb-3 text-sm text-slate-500">{photoCount} foto(s) zichtbaar voor {selectedSpecies.toLowerCase()}.</div>
 
               {loadingPhotos ? (
-                <p className="text-sm text-slate-500">Laden...</p>
+                <p className="text-sm text-slate-500">Foto&apos;s laden...</p>
               ) : photos.length === 0 ? (
-                <p className="text-sm text-slate-500">Nog geen fotos voor deze soort. Importeer via de picker.</p>
+                <p className="rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-600">
+                  Nog geen foto&apos;s voor deze soort. Gebruik bovenaan een van de drie acties om te beginnen.
+                </p>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {photos.map((photo) => (
-                    <article
-                      key={photo.id}
-                      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-                    >
-                      <img src={photo.imageUrl} alt={photo.species} className="h-44 w-full object-cover" />
-                      <div className="space-y-2 p-4 text-sm">
-                        <p className="font-semibold text-slate-900">{photo.locationName}</p>
-                        <p className="text-slate-600">
-                          {new Date(photo.takenAt).toLocaleDateString("nl-NL")} om{" "}
-                          {new Date(photo.takenAt).toLocaleTimeString("nl-NL", {
-                            hour: "2-digit",
-                            minute: "2-digit"
-                          })}
-                        </p>
+                    <article key={photo.id} className="overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white shadow-sm">
+                      <img src={photo.imageUrl} alt={photo.species} className="h-52 w-full object-cover" />
+                      <div className="space-y-3 p-4 text-sm">
+                        <div>
+                          <p className="font-semibold text-slate-900">{photo.locationName}</p>
+                          <p className="text-slate-600">
+                            {new Date(photo.takenAt).toLocaleDateString("nl-NL")} om{" "}
+                            {new Date(photo.takenAt).toLocaleTimeString("nl-NL", {
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            })}
+                          </p>
+                        </div>
                         <p className="text-slate-700">
                           {photo.weather.tempC ?? "-"} C | {photo.weather.pressureHpa ?? "-"} hPa | {photo.weather.windKph ?? "-"} km/u
                         </p>
-                        <p className="text-xs text-slate-500">
-                          Geupload door: {photo.userEmail}
-                        </p>
+                        <p className="text-xs text-slate-500">Toegevoegd door {photo.userEmail}</p>
                         <div>
-                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Soort
-                          </label>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Soort</label>
                           <select
                             value={photo.species}
-                            onChange={(event) =>
-                              void updateSpecies(photo.id, event.target.value as SpeciesName)
-                            }
-                            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
+                            onChange={(event) => void updateSpecies(photo.id, event.target.value as SpeciesName)}
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700"
                           >
                             {speciesOptions.map((species) => (
                               <option key={species} value={species}>
@@ -563,25 +738,12 @@ export default function App() {
                   ))}
                 </div>
               )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="inline-flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                <ShieldCheck className="h-4 w-4" />
-                Ingelogd als {user.role}
-              </div>
-              <button
-                onClick={logout}
-                className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-              >
-                Uitloggen
-              </button>
-            </div>
+            </section>
           </div>
         )}
 
-        {error ? <p className="mt-4 text-sm text-red-600">{error}</p> : null}
-        {info ? <p className="mt-4 text-sm text-emerald-700">{info}</p> : null}
+        {error ? <p className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error}</p> : null}
+        {info ? <p className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">{info}</p> : null}
       </section>
     </main>
   );
@@ -603,6 +765,50 @@ function getApiErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("BESTAND_LEZEN_MISLUKT"));
+    };
+    reader.onerror = () => reject(new Error("BESTAND_LEZEN_MISLUKT"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function ActionButton({
+  icon,
+  title,
+  subtitle,
+  onClick,
+  disabled = false
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex min-h-32 flex-col items-start justify-between rounded-[1.5rem] border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-sky-800 p-5 text-left text-white shadow-sm transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <span className="inline-flex rounded-2xl bg-white/10 p-3">{icon}</span>
+      <span className="block">
+        <span className="block text-lg font-bold">{title}</span>
+        <span className="mt-1 block text-sm text-slate-200">{subtitle}</span>
+      </span>
+    </button>
+  );
+}
+
 function MetricCard({
   icon,
   title,
@@ -622,8 +828,8 @@ function MetricCard({
         : "bg-sky-50 border-sky-200";
 
   return (
-    <article className={`rounded-2xl border p-4 shadow-sm ${toneClass}`}>
-      <div className="mb-3 inline-flex rounded-lg bg-white p-2 shadow-sm">{icon}</div>
+    <article className={`rounded-[1.5rem] border p-4 shadow-sm ${toneClass}`}>
+      <div className="mb-3 inline-flex rounded-xl bg-white p-2 shadow-sm">{icon}</div>
       <p className="text-sm text-slate-600">{title}</p>
       <p className="text-2xl font-bold text-slate-900">{value}</p>
     </article>
