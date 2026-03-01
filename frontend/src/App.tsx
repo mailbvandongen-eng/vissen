@@ -438,13 +438,13 @@ export default function App() {
     setInfo(null);
 
     try {
-      const dataUrl = await fileToDataUrl(pendingPhoto.file);
+      const preparedImage = await prepareImageUpload(pendingPhoto.file);
       await api.post(
         "/photos/upload",
         {
           fileName: pendingPhoto.file.name,
-          mimeType: pendingPhoto.file.type || "image/jpeg",
-          dataUrl,
+          mimeType: preparedImage.mimeType,
+          dataUrl: preparedImage.dataUrl,
           species: selectedSpecies
         },
         { headers: authHeader() }
@@ -623,6 +623,19 @@ export default function App() {
                         })}
                       </div>
                     </div>
+                    <p className="text-sm text-slate-500">
+                      Grote telefoonfoto&apos;s worden nu automatisch verkleind voor een snellere en betrouwbaardere upload.
+                    </p>
+                    {error ? (
+                      <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                        {error}
+                      </p>
+                    ) : null}
+                    {!error && info ? (
+                      <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+                        {info}
+                      </p>
+                    ) : null}
                     <div className="grid gap-3 sm:grid-cols-2">
                       <button
                         type="button"
@@ -778,6 +791,74 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("BESTAND_LEZEN_MISLUKT"));
     reader.readAsDataURL(file);
   });
+}
+
+async function prepareImageUpload(file: File): Promise<{ dataUrl: string; mimeType: string }> {
+  if (!file.type.startsWith("image/")) {
+    return {
+      dataUrl: await fileToDataUrl(file),
+      mimeType: file.type || "application/octet-stream"
+    };
+  }
+
+  const image = await loadImageFromFile(file);
+  let maxDimension = 1600;
+  let quality = 0.82;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const scaled = renderImageToJpeg(image, maxDimension, quality);
+    if (scaled.length <= 3_500_000 || attempt === 3) {
+      return {
+        dataUrl: scaled,
+        mimeType: "image/jpeg"
+      };
+    }
+
+    maxDimension = Math.max(900, Math.round(maxDimension * 0.8));
+    quality = Math.max(0.6, quality - 0.08);
+  }
+
+  return {
+    dataUrl: await fileToDataUrl(file),
+    mimeType: file.type || "image/jpeg"
+  };
+}
+
+function loadImageFromFile(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("BESTAND_LEZEN_MISLUKT"));
+        return;
+      }
+
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("AFBEELDING_LEZEN_MISLUKT"));
+      image.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error("BESTAND_LEZEN_MISLUKT"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderImageToJpeg(image: HTMLImageElement, maxDimension: number, quality: number): string {
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("CANVAS_NIET_BESCHIKBAAR");
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
 function ActionButton({
