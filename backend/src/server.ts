@@ -22,7 +22,9 @@ const app = Fastify({ logger: true });
 
 const allowedOrigins = new Set<string>([
   "http://localhost:5173",
-  "http://127.0.0.1:5173"
+  "http://localhost:5174",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5174"
 ]);
 
 if (env.FRONTEND_ORIGIN) {
@@ -55,18 +57,30 @@ app.post("/auth/dev-login", async (request, reply) => {
     return reply.code(403).send({ error: "Dev login disabled" });
   }
 
+  // Create or get dev user in database
+  const user = await prisma.user.upsert({
+    where: { email: "dev@visapp.local" },
+    update: {},
+    create: {
+      email: "dev@visapp.local",
+      name: "Dev User",
+      role: "ADMIN"
+    }
+  });
+
   const token = signAppToken({
-    sub: "dev-user",
-    email: "dev@visapp.local",
-    role: "ADMIN"
+    sub: user.id,
+    email: user.email,
+    role: user.role
   });
 
   return {
     token,
     user: {
-      id: "dev-user",
-      email: "dev@visapp.local",
-      role: "ADMIN"
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role
     }
   };
 });
@@ -76,6 +90,7 @@ const googleAuthBodySchema = z.object({
 });
 
 const importPickerBodySchema = z.object({
+  accessToken: z.string().min(1),
   items: z
     .array(
       z.object({
@@ -166,7 +181,12 @@ app.post("/photos/import-picker-selection", { preHandler: [requireAuth] }, async
     return reply.code(400).send({ error: "Invalid payload" });
   }
 
-  const imported = importPickerSelection(request.user!.id, parsed.data.items);
+  const imported = await importPickerSelection(
+    request.user!.id,
+    request.user!.email,
+    parsed.data.items,
+    parsed.data.accessToken
+  );
   return { importedCount: imported.length, photos: imported };
 });
 
@@ -177,7 +197,7 @@ app.get("/photos", { preHandler: [requireAuth] }, async (request) => {
     })
     .parse(request.query);
 
-  const photos = listPhotos(request.user!.id, query.species);
+  const photos = await listPhotos(query.species);
   return { photos };
 });
 
@@ -188,7 +208,7 @@ app.post("/photos/:id/species", { preHandler: [requireAuth] }, async (request, r
     return reply.code(400).send({ error: "Invalid payload" });
   }
 
-  const updated = updatePhotoSpecies(request.user!.id, params.id, body.data.species);
+  const updated = await updatePhotoSpecies(params.id, body.data.species);
   if (!updated) {
     return reply.code(404).send({ error: "Photo not found" });
   }
@@ -197,7 +217,7 @@ app.post("/photos/:id/species", { preHandler: [requireAuth] }, async (request, r
 
 app.get("/dashboard/species/:name", { preHandler: [requireAuth] }, async (request, reply) => {
   const params = z.object({ name: z.string().min(1) }).parse(request.params);
-  const dashboard = speciesDashboard(request.user!.id, params.name);
+  const dashboard = await speciesDashboard(params.name);
   return dashboard;
 });
 

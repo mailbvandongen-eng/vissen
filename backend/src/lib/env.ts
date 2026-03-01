@@ -10,7 +10,9 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((value) => value === "true"),
-  PORT: z.string().optional()
+  PORT: z.string().optional(),
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_ANON_KEY: z.string().min(1).optional()
 });
 
 export const env = envSchema.parse(process.env);

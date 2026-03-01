@@ -1,8 +1,13 @@
+import { prisma } from "../lib/prisma.js";
+import { downloadAndProcessImage } from "./image-processor.js";
+import { fetchHistoricalWeather } from "./weather-api.js";
+
 export type SpeciesName = "Snoek" | "Baars" | "Karper" | "Snoekbaars";
 
 export type PhotoRecord = {
   id: string;
   userId: string;
+  userEmail: string;
   sourceItemId: string;
   imageUrl: string;
   thumbnailUrl: string;
@@ -12,9 +17,9 @@ export type PhotoRecord = {
   locationName: string;
   species: SpeciesName;
   weather: {
-    pressureHpa: number;
-    tempC: number;
-    windKph: number;
+    pressureHpa: number | null;
+    tempC: number | null;
+    windKph: number | null;
   };
 };
 
@@ -29,98 +34,264 @@ export type PickerSelectionInput = {
   species?: SpeciesName;
 };
 
-const store = new Map<string, PhotoRecord>();
-
-function fakeWeather(lat: number, lon: number, takenAt: string) {
-  const stamp = new Date(takenAt).getTime() / 1000;
-  const drift = Math.abs(Math.round(lat * 10 + lon * 7 + (stamp % 97)));
-  return {
-    pressureHpa: 995 + (drift % 35),
-    tempC: 4 + (drift % 19),
-    windKph: 5 + (drift % 26)
-  };
+// Ensure species exist in database
+async function ensureSpecies() {
+  const speciesList: SpeciesName[] = ["Snoek", "Baars", "Karper", "Snoekbaars"];
+  for (const name of speciesList) {
+    await prisma.species.upsert({
+      where: { slug: name.toLowerCase() },
+      update: {},
+      create: {
+        slug: name.toLowerCase(),
+        displayName: name,
+      },
+    });
+  }
 }
 
-export function importPickerSelection(userId: string, items: PickerSelectionInput[]) {
+// Initialize species on first import
+let speciesInitialized = false;
+
+export async function importPickerSelection(
+  userId: string,
+  userEmail: string,
+  items: PickerSelectionInput[],
+  accessToken: string
+): Promise<PhotoRecord[]> {
+  if (!speciesInitialized) {
+    await ensureSpecies();
+    speciesInitialized = true;
+  }
+
   const imported: PhotoRecord[] = [];
 
   for (const item of items) {
-    const existing = Array.from(store.values()).find(
-      (record) => record.userId === userId && record.sourceItemId === item.sourceItemId
-    );
+    // Check if already imported (by sourceItemId)
+    const existing = await prisma.photo.findUnique({
+      where: { sourceItemId: item.sourceItemId },
+      include: {
+        user: true,
+        weatherData: true,
+        speciesLinks: { include: { species: true } },
+      },
+    });
 
     if (existing) {
-      imported.push(existing);
+      imported.push(mapToPhotoRecord(existing));
       continue;
     }
 
-    const id = `photo-${crypto.randomUUID()}`;
-    const weather = fakeWeather(item.lat, item.lon, item.takenAt);
-    const next: PhotoRecord = {
-      id,
-      userId,
-      sourceItemId: item.sourceItemId,
-      imageUrl: item.imageUrl,
-      thumbnailUrl: item.thumbnailUrl ?? item.imageUrl,
-      takenAt: item.takenAt,
-      lat: item.lat,
-      lon: item.lon,
-      locationName: item.locationName ?? `${item.lat.toFixed(2)}, ${item.lon.toFixed(2)}`,
-      species: item.species ?? "Snoek",
-      weather
-    };
+    try {
+      // Download, process and upload image to Supabase
+      const processed = await downloadAndProcessImage(item.imageUrl, item.sourceItemId, accessToken);
 
-    store.set(next.id, next);
-    imported.push(next);
+      // Use EXIF data if available, fallback to Google's data
+      const takenAt = processed.exif.takenAt ?? new Date(item.takenAt);
+      const lat = processed.exif.lat ?? item.lat;
+      const lon = processed.exif.lon ?? item.lon;
+
+      // Fetch historical weather
+      const weather = await fetchHistoricalWeather(lat, lon, takenAt);
+
+      // Get species
+      const speciesName = item.species ?? "Snoek";
+      const species = await prisma.species.findUnique({
+        where: { slug: speciesName.toLowerCase() },
+      });
+
+      // Create photo with weather data
+      const photo = await prisma.photo.create({
+        data: {
+          userId,
+          sourceItemId: item.sourceItemId,
+          imageUrl: processed.imageUrl,
+          thumbnailUrl: processed.thumbnailUrl,
+          takenAt,
+          lat,
+          lon,
+          weatherData: {
+            create: {
+              temperatureC: weather.tempC,
+              pressureHpa: weather.pressureHpa,
+              windKph: weather.windKph,
+              precipitation: weather.precipitation,
+              weatherCode: weather.weatherCode,
+            },
+          },
+          speciesLinks: species
+            ? {
+                create: {
+                  speciesId: species.id,
+                  manualOverride: true,
+                },
+              }
+            : undefined,
+        },
+        include: {
+          user: true,
+          weatherData: true,
+          speciesLinks: { include: { species: true } },
+        },
+      });
+
+      imported.push(mapToPhotoRecord(photo));
+    } catch (error) {
+      console.error(`Failed to import photo ${item.sourceItemId}:`, error);
+      // Continue with other photos
+    }
   }
 
   return imported;
 }
 
-export function listPhotos(userId: string, species?: string) {
-  const all = Array.from(store.values()).filter((record) => record.userId === userId);
-  if (!species) {
-    return all;
-  }
-  return all.filter((record) => record.species.toLowerCase() === species.toLowerCase());
+// List ALL photos (not filtered by user - everyone sees everything)
+export async function listPhotos(species?: string): Promise<PhotoRecord[]> {
+  const photos = await prisma.photo.findMany({
+    where: species
+      ? {
+          speciesLinks: {
+            some: {
+              species: {
+                slug: species.toLowerCase(),
+              },
+            },
+          },
+        }
+      : undefined,
+    include: {
+      user: true,
+      weatherData: true,
+      speciesLinks: { include: { species: true } },
+    },
+    orderBy: { takenAt: "desc" },
+  });
+
+  return photos.map(mapToPhotoRecord);
 }
 
-export function updatePhotoSpecies(userId: string, photoId: string, species: SpeciesName) {
-  const photo = store.get(photoId);
-  if (!photo || photo.userId !== userId) {
+export async function updatePhotoSpecies(
+  photoId: string,
+  speciesName: SpeciesName
+): Promise<PhotoRecord | null> {
+  const photo = await prisma.photo.findUnique({
+    where: { id: photoId },
+  });
+
+  if (!photo) {
     return null;
   }
-  const next = { ...photo, species };
-  store.set(photoId, next);
-  return next;
+
+  const species = await prisma.species.findUnique({
+    where: { slug: speciesName.toLowerCase() },
+  });
+
+  if (!species) {
+    return null;
+  }
+
+  // Delete old species links and create new one
+  await prisma.photoSpecies.deleteMany({
+    where: { photoId },
+  });
+
+  await prisma.photoSpecies.create({
+    data: {
+      photoId,
+      speciesId: species.id,
+      manualOverride: true,
+    },
+  });
+
+  const updated = await prisma.photo.findUnique({
+    where: { id: photoId },
+    include: {
+      user: true,
+      weatherData: true,
+      speciesLinks: { include: { species: true } },
+    },
+  });
+
+  return updated ? mapToPhotoRecord(updated) : null;
 }
 
-export function speciesDashboard(userId: string, speciesName: string) {
-  const rows = listPhotos(userId, speciesName);
-  if (rows.length === 0) {
+// Dashboard for ALL users combined
+export async function speciesDashboard(speciesName: string) {
+  const photos = await listPhotos(speciesName);
+
+  if (photos.length === 0) {
     return {
       species: speciesName,
       count: 0,
       averages: {
         pressureHpa: null,
         tempC: null,
-        windKph: null
-      }
+        windKph: null,
+      },
     };
   }
 
-  const pressure =
-    rows.reduce((sum, row) => sum + row.weather.pressureHpa, 0) / rows.length;
-  const temp = rows.reduce((sum, row) => sum + row.weather.tempC, 0) / rows.length;
-  const wind = rows.reduce((sum, row) => sum + row.weather.windKph, 0) / rows.length;
+  const withWeather = photos.filter(
+    (p) => p.weather.pressureHpa !== null || p.weather.tempC !== null
+  );
+
+  if (withWeather.length === 0) {
+    return {
+      species: speciesName,
+      count: photos.length,
+      averages: {
+        pressureHpa: null,
+        tempC: null,
+        windKph: null,
+      },
+    };
+  }
+
+  const avgPressure =
+    withWeather.reduce((sum, p) => sum + (p.weather.pressureHpa ?? 0), 0) /
+    withWeather.filter((p) => p.weather.pressureHpa !== null).length;
+
+  const avgTemp =
+    withWeather.reduce((sum, p) => sum + (p.weather.tempC ?? 0), 0) /
+    withWeather.filter((p) => p.weather.tempC !== null).length;
+
+  const avgWind =
+    withWeather.reduce((sum, p) => sum + (p.weather.windKph ?? 0), 0) /
+    withWeather.filter((p) => p.weather.windKph !== null).length;
 
   return {
-    species: rows[0].species,
-    count: rows.length,
+    species: speciesName,
+    count: photos.length,
     averages: {
-      pressureHpa: Number(pressure.toFixed(1)),
-      tempC: Number(temp.toFixed(1)),
-      windKph: Number(wind.toFixed(1))
-    }
+      pressureHpa: isNaN(avgPressure) ? null : Number(avgPressure.toFixed(1)),
+      tempC: isNaN(avgTemp) ? null : Number(avgTemp.toFixed(1)),
+      windKph: isNaN(avgWind) ? null : Number(avgWind.toFixed(1)),
+    },
+  };
+}
+
+// Helper to map Prisma result to PhotoRecord
+function mapToPhotoRecord(photo: any): PhotoRecord {
+  const species = photo.speciesLinks?.[0]?.species;
+
+  return {
+    id: photo.id,
+    userId: photo.userId,
+    userEmail: photo.user?.email ?? "unknown",
+    sourceItemId: photo.sourceItemId ?? "",
+    imageUrl: photo.imageUrl,
+    thumbnailUrl: photo.thumbnailUrl ?? photo.imageUrl,
+    takenAt: photo.takenAt?.toISOString() ?? new Date().toISOString(),
+    lat: photo.lat ?? 52.1,
+    lon: photo.lon ?? 5.3,
+    locationName:
+      photo.lat && photo.lon
+        ? `${photo.lat.toFixed(4)}, ${photo.lon.toFixed(4)}`
+        : "Onbekende locatie",
+    species: (species?.displayName as SpeciesName) ?? "Snoek",
+    weather: {
+      pressureHpa: photo.weatherData?.pressureHpa ?? null,
+      tempC: photo.weatherData?.temperatureC ?? null,
+      windKph: photo.weatherData?.windKph ?? null,
+    },
   };
 }

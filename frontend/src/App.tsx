@@ -32,10 +32,11 @@ type PhotoRecord = {
   lon: number;
   locationName: string;
   species: SpeciesName;
+  userEmail: string;
   weather: {
-    pressureHpa: number;
-    tempC: number;
-    windKph: number;
+    pressureHpa: number | null;
+    tempC: number | null;
+    windKph: number | null;
   };
 };
 
@@ -108,6 +109,14 @@ function parseDurationToMs(value?: string) {
     return Number(trimmed.slice(0, -1)) * 60_000;
   }
   return 3000;
+}
+
+function toAutoClosePickerUri(uri: string) {
+  const trimmed = uri.trim();
+  if (trimmed.endsWith("/autoclose")) {
+    return trimmed;
+  }
+  return `${trimmed.replace(/\/+$/, "")}/autoclose`;
 }
 
 export default function App() {
@@ -211,12 +220,13 @@ export default function App() {
       { accessToken, maxItemCount: 50 },
       { headers: authHeader() }
     );
+    const pickerUri = toAutoClosePickerUri(session.data.pickerUri);
 
     let pickerWindow = pickerPopupRef.current;
     if (pickerWindow && !pickerWindow.closed) {
-      pickerWindow.location.href = session.data.pickerUri;
+      pickerWindow.location.href = pickerUri;
     } else {
-      pickerWindow = window.open(session.data.pickerUri, "_blank", "noopener,noreferrer");
+      pickerWindow = window.open(pickerUri, "_blank", "popup=yes,width=520,height=740");
       if (!pickerWindow) {
         throw new Error("POPUP_BLOCKED");
       }
@@ -284,7 +294,7 @@ export default function App() {
 
     const imported = await api.post<{ importedCount: number }>(
       "/photos/import-picker-selection",
-      { items: importedItems },
+      { accessToken, items: importedItems },
       { headers: authHeader() }
     );
     if (imported.data.importedCount <= 0) {
@@ -362,15 +372,7 @@ export default function App() {
       setError("Google Picker staat nog niet geconfigureerd. Zet eerst VITE_GOOGLE_CLIENT_ID.");
       return;
     }
-    const popup = window.open("", "_blank", "noopener,noreferrer");
-    if (!popup) {
-      setError("Browser blokkeert de picker-popup. Sta pop-ups toe voor localhost en probeer opnieuw.");
-      return;
-    }
-    popup.document.title = "Google Picker";
-    popup.document.body.innerHTML =
-      "<p style='font-family: sans-serif; padding: 16px;'>Google Picker wordt geopend...</p>";
-    pickerPopupRef.current = popup;
+    // Don't pre-open popup - let Google OAuth open it directly (avoids double-popup blocking)
     setError(null);
     setImporting(true);
     pickerLogin();
@@ -533,7 +535,10 @@ export default function App() {
                           })}
                         </p>
                         <p className="text-slate-700">
-                          {photo.weather.tempC} C | {photo.weather.pressureHpa} hPa | {photo.weather.windKph} km/u
+                          {photo.weather.tempC ?? "-"} C | {photo.weather.pressureHpa ?? "-"} hPa | {photo.weather.windKph ?? "-"} km/u
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Geupload door: {photo.userEmail}
                         </p>
                         <div>
                           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">

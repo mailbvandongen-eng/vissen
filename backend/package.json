@@ -13,16 +13,20 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@fastify/static": "^9.0.0",
     "@prisma/client": "^6.2.1",
+    "@supabase/supabase-js": "^2.98.0",
     "dotenv": "^16.4.7",
+    "exif-parser": "^0.1.12",
     "fastify": "^5.1.0",
     "google-auth-library": "^9.15.1",
     "jsonwebtoken": "^9.0.2",
+    "sharp": "^0.34.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
     "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.10.2",
     "prisma": "^6.2.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"

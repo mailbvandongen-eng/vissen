@@ -71,17 +71,12 @@ export async function listPickerMediaItems(
   pageToken?: string
 ) {
   const query = new URLSearchParams();
+  query.set("sessionId", sessionId);
   if (pageToken) {
     query.set("pageToken", pageToken);
   }
 
-  const suffix = query.toString() ? `?${query.toString()}` : "";
-  return await googlePhotosRequest<PickerMediaItemsResponse>(
-    `/sessions/${sessionId}/mediaItems${suffix}`,
-    accessToken,
-    {
-      method: "GET"
-    }
-  );
+  return await googlePhotosRequest<PickerMediaItemsResponse>(`/mediaItems?${query.toString()}`, accessToken, {
+    method: "GET"
+  });
 }
-

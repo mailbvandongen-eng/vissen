@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(cat:*)",
+      "Bash(powershell -Command:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(npm run dev:backend:*)",
+      "Bash(npm run dev:frontend:*)",
+      "Bash(npm install:*)",
+      "Bash(dir \"C:\\VSCode\\_*\")",
+      "Bash(npx prisma db push:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 10 npx tsx:*)",
+      "Bash(timeout 8 npm run dev:*)",
+      "Bash(npm run dev)",
+      "Bash(netstat:*)"
+    ]
+  }
+}
