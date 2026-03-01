@@ -128,6 +128,8 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
   const [photos, setPhotos] = useState<PhotoRecord[]>([]);
   const [selectedSpecies, setSelectedSpecies] = useState<SpeciesName>(defaultSpecies);
   const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
@@ -374,6 +376,49 @@ export default function App() {
     }
   }
 
+  async function handleEmailLogin() {
+    if (!emailInput.trim()) {
+      setError("Vul eerst je e-mailadres in.");
+      return;
+    }
+
+    setError(null);
+    setInfo(null);
+
+    try {
+      const response = await api.post<{ token: string; user: AuthUser }>("/auth/email-login", {
+        email: emailInput.trim().toLowerCase()
+      });
+      setStoredToken(response.data.token);
+      setUser(response.data.user);
+      setInfo("Je bent ingelogd.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Inloggen met e-mail mislukt."));
+    }
+  }
+
+  async function handleEmailRegister() {
+    if (!emailInput.trim()) {
+      setError("Vul eerst je e-mailadres in.");
+      return;
+    }
+
+    setError(null);
+    setInfo(null);
+
+    try {
+      const response = await api.post<{ token: string; user: AuthUser }>("/auth/email-register", {
+        email: emailInput.trim().toLowerCase(),
+        name: nameInput.trim() || undefined
+      });
+      setStoredToken(response.data.token);
+      setUser(response.data.user);
+      setInfo("Account klaar en ingelogd.");
+    } catch (currentError) {
+      setError(getApiErrorMessage(currentError, "Account aanmaken mislukt."));
+    }
+  }
+
   async function updateSpecies(photoId: string, species: SpeciesName) {
     setError(null);
     try {
@@ -531,29 +576,67 @@ export default function App() {
           <section className="rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-2xl font-bold text-slate-900">Eerst inloggen</h2>
             <p className="mt-2 text-sm text-slate-600">Log in om je foto&apos;s te importeren, op te slaan en terug te zien in je galerij.</p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              {googleConfigured ? (
-                <GoogleLogin
-                  onSuccess={(credentialResponse) => {
-                    if (credentialResponse.credential) {
-                      void handleGoogleLogin(credentialResponse.credential);
-                    } else {
-                      setError("Google gaf geen token terug.");
-                    }
-                  }}
-                  onError={() => setError("Google login is afgebroken.")}
+            <div className="mt-5 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <div className="grid gap-3 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-700">Inloggen met e-mail</p>
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(event) => setEmailInput(event.target.value)}
+                  placeholder="jouw@emailadres.nl"
+                  className="h-12 rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-sky-500"
                 />
-              ) : (
-                <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Google login staat uit. Zet `VITE_GOOGLE_CLIENT_ID` in `frontend/.env`.
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={(event) => setNameInput(event.target.value)}
+                  placeholder="Naam (alleen voor nieuw account)"
+                  className="h-12 rounded-2xl border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-sky-500"
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleEmailLogin()}
+                    className="inline-flex h-12 items-center justify-center rounded-2xl bg-slate-900 px-5 text-sm font-semibold text-white transition hover:bg-slate-800"
+                  >
+                    Inloggen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleEmailRegister()}
+                    className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Account maken
+                  </button>
                 </div>
-              )}
-              <button
-                onClick={() => void handleDevLogin()}
-                className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:border-slate-500"
-              >
-                Dev-login
-              </button>
+                <p className="text-xs text-slate-500">Gebruik hier ook je bestaande admin-e-mailadres om direct in te loggen.</p>
+              </div>
+
+              <div className="grid gap-3 rounded-[1.5rem] border border-slate-200 bg-white p-4">
+                <p className="text-sm font-semibold text-slate-700">Andere opties</p>
+                {googleConfigured ? (
+                  <GoogleLogin
+                    onSuccess={(credentialResponse) => {
+                      if (credentialResponse.credential) {
+                        void handleGoogleLogin(credentialResponse.credential);
+                      } else {
+                        setError("Google gaf geen token terug.");
+                      }
+                    }}
+                    onError={() => setError("Google login is afgebroken.")}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Google login staat uit. Zet `VITE_GOOGLE_CLIENT_ID` in `frontend/.env`.
+                  </div>
+                )}
+                <button
+                  onClick={() => void handleDevLogin()}
+                  className="inline-flex h-12 items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 text-sm font-semibold text-slate-700 transition hover:border-slate-500"
+                >
+                  Dev-login
+                </button>
+              </div>
             </div>
           </section>
         ) : (

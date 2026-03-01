@@ -23,6 +23,31 @@ import {
 export async function buildApp() {
   const app = Fastify({ logger: true });
 
+  function toAuthResponse(user: {
+    id: string;
+    email: string;
+    role: "MEMBER" | "ADMIN";
+    name: string | null;
+    imageUrl?: string | null;
+  }) {
+    const token = signAppToken({
+      sub: user.id,
+      email: user.email,
+      role: user.role
+    });
+
+    return {
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        imageUrl: user.imageUrl,
+        role: user.role
+      }
+    };
+  }
+
   const allowedOrigins = new Set<string>([
     "http://localhost:5173",
     "http://localhost:5174",
@@ -90,25 +115,16 @@ export async function buildApp() {
       }
     });
 
-    const token = signAppToken({
-      sub: user.id,
-      email: user.email,
-      role: user.role
-    });
-
-    return {
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role
-      }
-    };
+    return toAuthResponse(user);
   });
 
   const googleAuthBodySchema = z.object({
     idToken: z.string().min(1)
+  });
+
+  const emailAuthBodySchema = z.object({
+    email: z.string().email(),
+    name: z.string().trim().min(1).max(120).optional()
   });
 
   const importPickerBodySchema = z.object({
@@ -178,26 +194,53 @@ export async function buildApp() {
         }
       });
 
-      const token = signAppToken({
-        sub: user.id,
-        email: user.email,
-        role: user.role
-      });
-
-      return {
-        token,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          imageUrl: user.imageUrl,
-          role: user.role
-        }
-      };
+      return toAuthResponse(user);
     } catch (error) {
       request.log.error({ error }, "Google auth failed");
       return reply.code(401).send({ error: `Google login failed: ${getErrorMessage(error)}` });
     }
+  });
+
+  app.post("/api/auth/email-login", async (request, reply) => {
+    const parseResult = emailAuthBodySchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({ error: "Invalid payload" });
+    }
+
+    const email = parseResult.data.email.trim().toLowerCase();
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (!user) {
+      return reply.code(404).send({ error: "Geen account gevonden voor dit e-mailadres." });
+    }
+
+    return toAuthResponse(user);
+  });
+
+  app.post("/api/auth/email-register", async (request, reply) => {
+    const parseResult = emailAuthBodySchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.code(400).send({ error: "Invalid payload" });
+    }
+
+    const email = parseResult.data.email.trim().toLowerCase();
+    const fallbackName = email.split("@")[0] || "Gebruiker";
+    const name = parseResult.data.name?.trim() || fallbackName;
+
+    const user = await prisma.user.upsert({
+      where: { email },
+      update: {
+        name
+      },
+      create: {
+        email,
+        name
+      }
+    });
+
+    return toAuthResponse(user);
   });
 
   app.get("/api/auth/me", { preHandler: [requireAuth] }, async (request) => {
