@@ -10,7 +10,8 @@ import {
   importPickerSelection,
   listPhotos,
   speciesDashboard,
-  updatePhotoSpecies
+  updatePhotoSpecies,
+  type PickerSelectionInput
 } from "./modules/photo-store.js";
 import {
   createPickerSession,
@@ -195,7 +196,7 @@ export async function buildApp() {
     const imported = await importPickerSelection(
       request.user!.id,
       request.user!.email,
-      parsed.data.items,
+      parsed.data.items as PickerSelectionInput[],
       parsed.data.accessToken
     );
     return { importedCount: imported.length, photos: imported };
